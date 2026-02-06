@@ -20,55 +20,53 @@ An AI-powered Configuration Management Database (CMDB) backend service built wit
 ## Architecture Overview
 
 ```
-                         ┌──────────────┐
-                         │  Raw Data    │
-                         │ CSV/JSON/YAML│
-                         └──────┬───────┘
-                                │
-                         POST /ingest
-                                │
-                    ┌───────────▼───────────┐
-                    │   Format Detector     │
-                    │  (extension + sniff)  │
-                    └───────────┬───────────┘
-                                │
-                    ┌───────────▼───────────┐
-                    │   Parser Layer        │
-                    │  CSV / JSON / YAML    │
-                    └───────────┬───────────┘
-                                │
-                    ┌───────────▼───────────┐
-                    │  Rule-Based Normalizer│
-                    │  (OS, status, dates)  │
-                    └───────────┬───────────┘
-                                │
-                    ┌───────────▼───────────┐
-                    │   AI Extraction &     │
-                    │   Enrichment          │
-                    │   (via OpenRouter)    │
-                    └───────────┬───────────┘
-                                │
-                    ┌───────────▼───────────┐
-                    │  Upsert to SQLite     │
-                    │  (null-safe merge)    │
-                    └───────────┬───────────┘
-                                │
-                    ┌───────────▼───────────┐
-                    │ Relationship Resolver │
-                    │ (fuzzy FK matching)   │
-                    └───────────────────────┘
+                             ┌──────────────┐
+                             │   Raw Data   │
+                             │ CSV/JSON/YAML│
+                             └──────┬───────┘
+                                    │
+                             POST /ingest
+                                    │
+                      ┌─────────────▼─────────────┐
+                      │      Format Detector      │
+                      │    (extension + sniff)    │
+                      └─────────────┬─────────────┘
+                                    │
+                      ┌─────────────▼─────────────┐
+                      │        Parser Layer       │
+                      │     CSV / JSON / YAML     │
+                      └─────────────┬─────────────┘
+                                    │
+                      ┌─────────────▼─────────────┐
+                      │   Rule-Based Normalizer   │
+                      │    (OS, status, dates)    │
+                      └─────────────┬─────────────┘
+                                    │
+                      ┌─────────────▼─────────────┐
+                      │   AI Extraction &         │
+                      │       Enrichment          │
+                      │     (via OpenRouter)      │
+                      └─────────────┬─────────────┘
+                                    │
+                      ┌─────────────▼─────────────┐
+                      │      Upsert to SQLite     │
+                      │     (null-safe merge)     │
+                      └─────────────┬─────────────┘
+                                    │
+                      ┌─────────────▼─────────────┐
+                      │  Relationship Resolver    │
+                      │    (fuzzy FK matching)    │
+                      └─────────────┴─────────────┘
 
-  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐
-  │GET /devices│ │GET /users│  │GET /apps │  │GET /ci/id│
-  └──────────┘  └──────────┘  └──────────┘  └──────────┘
+        ┌──────────────┐  ┌───────────┐  ┌──────────┐  ┌─────────────┐
+        │ GET /devices │  │ GET /users│  │ GET /apps│  │ GET /ci/{id}│
+        └──────────────┘  └───────────┘  └──────────┘  └─────────────┘
 
-                    ┌───────────────────────┐
-                    │     POST /ask         │
-                    │  NL Question          │
-                    │    → AI parse to SQL  │
-                    │    → Execute query    │
-                    │    → AI format answer │
-                    └───────────────────────┘
+                      ┌───────────────────────────┐
+                      │         POST /ask         │
+                      │     NL question → SQL     │
+                      │    Execute → AI format    │
+                      └───────────────────────────┘
 ```
 
 The system follows a **pipeline architecture** for ingestion: each stage has a clear input/output contract (list of dicts), making stages independently testable and replaceable. If the AI service is unavailable, the pipeline degrades gracefully by skipping AI steps and storing rule-normalized data.
@@ -128,12 +126,12 @@ The system follows a **pipeline architecture** for ingestion: each stage has a c
 
 ```
 ┌──────────────┐       ┌────────────────────┐       ┌──────────────┐
-│   devices    │       │ user_app_assignments│       │    users     │
-├──────────────┤       ├───────��────────────┤       ├──────────────┤
+│   devices    │       │ user_app_assignments│      │    users     │
+├──────────────┤       ├────────────────────┤       ├──────────────┤
 │ id (PK)      │       │ user_id (FK)       │       │ id (PK)      │
 │ hostname     │       │ app_id (FK)        │       │ name         │
 │ ip_address   │       └────────────────────┘       │ email        │
-│ mac_address  │                                     │ team         │
+│ mac_address  │                                    │ team         │
 │ os           │       ┌────────────────────┐       │ groups (JSON)│
 │ assigned_user├──────→│ device_app_deps    │       │ mfa_enabled  │
 │ location     │       ├────────────────────┤       │ last_login   │
