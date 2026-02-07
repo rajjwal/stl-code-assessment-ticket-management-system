@@ -26,6 +26,7 @@ from app.services.parsers.json_parser import JSONParser
 from app.services.parsers.yaml_parser import YAMLParser
 from app.services.parsers.detector import detect_format, detect_source_type
 from app.services.normalizer import normalize_record
+from app.services.relationship_resolver import resolve_relationships
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +136,15 @@ async def ingest_file(
 
     await db.commit()
 
-    # Step 6: Log ingestion
+    # Step 6: Resolve cross-source relationships (device→user, user→app, app→app)
+    try:
+        rel_summary = await resolve_relationships(db)
+        logger.info(f"Relationships resolved: {rel_summary}")
+    except Exception as e:
+        errors.append(f"Relationship resolution error: {e}")
+        logger.exception("Relationship resolution failed")
+
+    # Step 7: Log ingestion
     log_entry = IngestionLog(
         filename=filename,
         file_format=file_format,
