@@ -4,15 +4,21 @@ Accepts questions in plain English and uses AI to convert them
 into database queries, then formats the results as human-readable answers.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.database import get_db
 from app.schemas.ask import AskRequest, AskResponse
+from app.services.query_service import handle_question
 
 router = APIRouter(tags=["ask"])
 
 
 @router.post("/ask", response_model=AskResponse)
-async def ask_question(request: AskRequest) -> AskResponse:
+async def ask_question(
+    request: AskRequest,
+    db: AsyncSession = Depends(get_db),
+) -> AskResponse:
     """Ask a natural language question about CMDB data.
 
     Examples:
@@ -20,9 +26,9 @@ async def ask_question(request: AskRequest) -> AskResponse:
         - "Show me all active devices in London"
         - "How many SaaS apps have SSO enabled?"
     """
-    # Stub — will be implemented in Phase 4
+    result = await handle_question(request.question, db)
     return AskResponse(
-        answer="Natural language queries will be available after AI integration.",
-        results=[],
-        query_interpretation="not_implemented",
+        answer=result["answer"],
+        results=result["results"],
+        query_interpretation=result["query_interpretation"],
     )

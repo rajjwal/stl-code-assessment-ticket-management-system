@@ -1,10 +1,12 @@
 """Shared test fixtures for the CMDB test suite.
 
 Provides in-memory SQLite database, async test client, and sample data loaders.
+Disables real AI API calls by default (set OPENROUTER_API_KEY="" for tests).
 """
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -15,6 +17,21 @@ from app.main import app as fastapi_app
 
 # Import models to ensure tables are registered with Base.metadata
 import app.models  # noqa: F401
+
+
+@pytest.fixture(autouse=True)
+def disable_real_ai_calls():
+    """Prevent tests from making real OpenRouter API calls.
+
+    Tests that need AI behavior should mock the specific AI functions.
+    """
+    with patch("app.services.ai_service.settings") as mock_settings:
+        mock_settings.OPENROUTER_API_KEY = ""
+        mock_settings.OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+        mock_settings.AI_MODEL = "test-model"
+        mock_settings.AI_TEMPERATURE = 0.1
+        mock_settings.AI_MAX_TOKENS = 4096
+        yield
 
 INPUT_DATA_DIR = Path(__file__).parent.parent / "input_data"
 

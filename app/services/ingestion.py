@@ -1,10 +1,11 @@
 """Ingestion pipeline orchestrator.
 
-Coordinates the full ingestion flow: detect format → parse → normalize →
-(AI extract/enrich, added in Phase 4) → upsert to database → log result.
+Coordinates the full ingestion flow: detect format → parse → pre-normalize →
+AI extract → AI enrich → post-normalize → upsert to database → log result.
 
 Each stage takes and returns list[dict], making stages independently
-testable and the pipeline easy to extend.
+testable and the pipeline easy to extend. If AI is unavailable, the pipeline
+degrades gracefully and uses rule-based normalization only.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from app.services.parsers.yaml_parser import YAMLParser
 from app.services.parsers.detector import detect_format, detect_source_type
 from app.services.normalizer import normalize_record
 from app.services.relationship_resolver import resolve_relationships
+from app.services.ai_service import extract_and_structure, enrich
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +49,13 @@ async def ingest_file(
     Pipeline stages:
     1. Detect format and source type
     2. Parse raw content into records
-    3. Normalize records (rule-based)
-    4. (Phase 4: AI extract + enrich)
-    5. Upsert to database
-    6. Log the ingestion
+    3. Pre-normalize records (rule-based)
+    4. AI extract and structure
+    5. AI enrich
+    6. Post-normalize (rule-based, ensures AI output is clean)
+    7. Upsert to database
+    8. Resolve relationships
+    9. Log the ingestion
 
     Args:
         filename: Original filename for format detection.
@@ -113,7 +118,7 @@ async def ingest_file(
             errors=[str(e)],
         )
 
-    # Step 4: Normalize
+    # Step 4: Pre-normalize (rule-based)
     normalized = []
     for i, record in enumerate(records):
         try:
@@ -122,7 +127,38 @@ async def ingest_file(
             errors.append(f"Record {i}: normalization error: {e}")
             normalized.append(record)  # Keep original on error
 
-    # Step 5: Upsert to database
+    # Step 5: AI extract and structure (graceful degradation if unavailable)
+    ai_calls = 0
+    try:
+        ai_extracted = await extract_and_structure(normalized, source_type)
+        if ai_extracted is not normalized:
+            ai_calls += 1
+            normalized = ai_extracted
+    except Exception as e:
+        errors.append(f"AI extraction error (non-fatal): {e}")
+        logger.warning(f"AI extraction failed, continuing with rule-based data: {e}")
+
+    # Step 6: AI enrich (graceful degradation if unavailable)
+    try:
+        ai_enriched = await enrich(normalized, source_type)
+        if ai_enriched is not normalized:
+            ai_calls += 1
+            normalized = ai_enriched
+    except Exception as e:
+        errors.append(f"AI enrichment error (non-fatal): {e}")
+        logger.warning(f"AI enrichment failed, continuing with existing data: {e}")
+
+    # Step 7: Post-normalize (ensures AI output conforms to our rules)
+    post_normalized = []
+    for i, record in enumerate(normalized):
+        try:
+            post_normalized.append(normalize_record(record, source_type))
+        except Exception as e:
+            errors.append(f"Record {i}: post-normalization error: {e}")
+            post_normalized.append(record)
+    normalized = post_normalized
+
+    # Step 8: Upsert to database
     for i, record in enumerate(normalized):
         try:
             created = await _upsert_record(db, record, source_type)
@@ -136,7 +172,7 @@ async def ingest_file(
 
     await db.commit()
 
-    # Step 6: Resolve cross-source relationships (device→user, user→app, app→app)
+    # Step 9: Resolve cross-source relationships (device→user, user→app, app→app)
     try:
         rel_summary = await resolve_relationships(db)
         logger.info(f"Relationships resolved: {rel_summary}")
@@ -144,14 +180,14 @@ async def ingest_file(
         errors.append(f"Relationship resolution error: {e}")
         logger.exception("Relationship resolution failed")
 
-    # Step 7: Log ingestion
+    # Step 10: Log ingestion
     log_entry = IngestionLog(
         filename=filename,
         file_format=file_format,
         source_type=source_type,
         records_count=len(records),
         status="success" if not errors else "partial",
-        ai_calls_made=0,
+        ai_calls_made=ai_calls,
         errors=json.dumps(errors) if errors else None,
     )
     db.add(log_entry)
@@ -166,6 +202,7 @@ async def ingest_file(
         records_created=records_created,
         records_updated=records_updated,
         errors=errors,
+        ai_enrichments_applied=ai_calls,
     )
 
 

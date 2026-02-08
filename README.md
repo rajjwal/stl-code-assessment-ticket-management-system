@@ -126,7 +126,7 @@ The system follows a **pipeline architecture** for ingestion: each stage has a c
 
 ```
 ┌──────────────┐       ┌────────────────────┐       ┌──────────────┐
-│   devices    │       │ user_app_assignments│      │    users     │
+│   devices    │       │user_app_assignments│       │    users     │
 ├──────────────┤       ├────────────────────┤       ├──────────────┤
 │ id (PK)      │       │ user_id (FK)       │       │ id (PK)      │
 │ hostname     │       │ app_id (FK)        │       │ name         │
