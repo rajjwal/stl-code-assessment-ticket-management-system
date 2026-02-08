@@ -68,3 +68,26 @@ async def test_apps_have_integrations(client: AsyncClient, sample_app_json: byte
     slack = next(a for a in data["items"] if a["name"] == "Slack")
     assert slack["integrations"] is not None
     assert "GitHub" in slack["integrations"]
+
+
+@pytest.mark.asyncio
+async def test_filter_by_owner(client: AsyncClient, sample_app_json: bytes):
+    await client.post("/ingest", files={"file": ("apps.json", sample_app_json)})
+
+    resp = await client.get("/apps", params={"owner": "Engineering"})
+    data = resp.json()
+    assert data["total"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_pagination(client: AsyncClient, sample_app_json: bytes):
+    await client.post("/ingest", files={"file": ("apps.json", sample_app_json)})
+
+    resp = await client.get("/apps", params={"limit": 2, "offset": 0})
+    data = resp.json()
+    assert len(data["items"]) == 2
+    assert data["total"] == 6
+
+    resp2 = await client.get("/apps", params={"limit": 2, "offset": 2})
+    data2 = resp2.json()
+    assert len(data2["items"]) == 2

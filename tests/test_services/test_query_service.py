@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -109,7 +108,7 @@ class TestHandleQuestion:
             result = await handle_question("How many SaaS apps?", db_session)
 
         # app_type is stored as "SaaS" — query uses lowercase comparison
-        assert len(result["results"]) >= 0  # depends on case handling
+        assert len(result["results"]) >= 1
 
     @pytest.mark.asyncio
     async def test_ai_unavailable(self, db_session: AsyncSession):
@@ -139,3 +138,78 @@ class TestHandleQuestion:
             result = await handle_question("test", db_session)
 
         assert "unknown" in result["answer"].lower()
+
+    @pytest.mark.asyncio
+    async def test_contains_filter(self, db_session: AsyncSession):
+        """The __contains operator should do case-insensitive partial matching."""
+        await _seed_query_data(db_session)
+
+        query_spec = {
+            "entity_type": "devices",
+            "filters": {"hostname__contains": "laptop"},
+            "sort_by": None,
+            "aggregation": "list",
+            "limit": None,
+        }
+
+        with patch("app.services.query_service.parse_natural_language_query",
+                    new_callable=AsyncMock) as mock_parse, \
+             patch("app.services.query_service.generate_answer",
+                    new_callable=AsyncMock) as mock_answer:
+            mock_parse.return_value = query_spec
+            mock_answer.return_value = "1 device found"
+
+            result = await handle_question("Find laptops", db_session)
+
+        assert len(result["results"]) == 1
+        assert result["results"][0]["hostname"] == "laptop-1"
+
+    @pytest.mark.asyncio
+    async def test_limit_applied(self, db_session: AsyncSession):
+        """Query limit should restrict the number of results."""
+        await _seed_query_data(db_session)
+
+        query_spec = {
+            "entity_type": "users",
+            "filters": {},
+            "sort_by": None,
+            "aggregation": "list",
+            "limit": 1,
+        }
+
+        with patch("app.services.query_service.parse_natural_language_query",
+                    new_callable=AsyncMock) as mock_parse, \
+             patch("app.services.query_service.generate_answer",
+                    new_callable=AsyncMock) as mock_answer:
+            mock_parse.return_value = query_spec
+            mock_answer.return_value = "1 user"
+
+            result = await handle_question("Show 1 user", db_session)
+
+        assert len(result["results"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_apps_query(self, db_session: AsyncSession):
+        """Query for apps should serialize correctly."""
+        await _seed_query_data(db_session)
+
+        query_spec = {
+            "entity_type": "apps",
+            "filters": {"sso_enabled": True},
+            "sort_by": None,
+            "aggregation": "list",
+            "limit": None,
+        }
+
+        with patch("app.services.query_service.parse_natural_language_query",
+                    new_callable=AsyncMock) as mock_parse, \
+             patch("app.services.query_service.generate_answer",
+                    new_callable=AsyncMock) as mock_answer:
+            mock_parse.return_value = query_spec
+            mock_answer.return_value = "1 app with SSO"
+
+            result = await handle_question("Apps with SSO?", db_session)
+
+        assert len(result["results"]) == 1
+        assert result["results"][0]["name"] == "Slack"
+        assert result["results"][0]["sso_enabled"] is True

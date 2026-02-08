@@ -95,3 +95,50 @@ async def test_app_has_integrations_with_resolution(
     )
     assert github_int is not None
     assert github_int["resolved_id"] == "APP-002"
+
+
+@pytest.mark.asyncio
+async def test_get_user_has_all_fields(client: AsyncClient, sample_okta_json: bytes):
+    """User CI detail should include all expected fields."""
+    await client.post("/ingest", files={"file": ("okta.json", sample_okta_json)})
+
+    resp = await client.get("/ci/u_999")
+    data = resp.json()
+    assert data["ci_type"] == "user"
+    assert "email" in data
+    assert "team" in data
+    assert "mfa_enabled" in data
+    assert "groups" in data
+    assert "status" in data
+    assert "apps" in data
+
+
+@pytest.mark.asyncio
+async def test_get_app_has_all_fields(client: AsyncClient, sample_app_json: bytes):
+    """App CI detail should include all expected fields."""
+    await client.post("/ingest", files={"file": ("apps.json", sample_app_json)})
+
+    resp = await client.get("/ci/APP-001")
+    data = resp.json()
+    assert data["ci_type"] == "app"
+    assert "vendor" in data
+    assert "app_type" in data
+    assert "sso_enabled" in data
+    assert "integrations" in data
+    assert "users_count" in data
+
+
+@pytest.mark.asyncio
+async def test_get_device_has_all_fields(client: AsyncClient, sample_hardware_json: bytes):
+    """Device CI detail should include all expected fields."""
+    await client.post("/ingest", files={"file": ("hw.json", sample_hardware_json)})
+
+    resp = await client.get("/ci/C-19283")
+    data = resp.json()
+    assert data["ci_type"] == "device"
+    assert "hostname" in data
+    assert "ip_address" in data
+    assert "os" in data
+    assert "status" in data
+    assert "assigned_apps" in data
+    assert "location" in data

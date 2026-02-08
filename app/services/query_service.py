@@ -115,9 +115,9 @@ def _apply_filters(query, model, filters: dict):
         else:
             column = getattr(model, key, None)
             if column is not None:
-                # Handle string status values — case-insensitive
+                # Case-insensitive match for strings (handles "SaaS" vs "saas")
                 if isinstance(value, str):
-                    query = query.where(column == value.lower())
+                    query = query.where(column.ilike(value))
                 else:
                     query = query.where(column == value)
 

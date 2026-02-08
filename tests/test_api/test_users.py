@@ -62,3 +62,29 @@ async def test_user_has_groups_as_list(client: AsyncClient, sample_okta_json: by
     for item in data["items"]:
         if item["groups"] is not None:
             assert isinstance(item["groups"], list)
+
+
+@pytest.mark.asyncio
+async def test_pagination(client: AsyncClient, sample_okta_json: bytes):
+    await client.post("/ingest", files={"file": ("okta.json", sample_okta_json)})
+
+    resp = await client.get("/users", params={"limit": 3, "offset": 0})
+    data = resp.json()
+    assert len(data["items"]) == 3
+    assert data["total"] == 9
+
+    resp2 = await client.get("/users", params={"limit": 3, "offset": 3})
+    data2 = resp2.json()
+    assert len(data2["items"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_combined_filters(client: AsyncClient, sample_okta_json: bytes):
+    """Multiple filters should be applied together (AND logic)."""
+    await client.post("/ingest", files={"file": ("okta.json", sample_okta_json)})
+
+    resp = await client.get("/users", params={"status": "active", "mfa_enabled": "true"})
+    data = resp.json()
+    for item in data["items"]:
+        assert item["status"] == "active"
+        assert item["mfa_enabled"] is True

@@ -72,3 +72,35 @@ async def test_pagination(client: AsyncClient, sample_hardware_json: bytes):
     data2 = resp2.json()
     assert len(data2["items"]) == 1
     assert data2["items"][0]["id"] != data["items"][0]["id"]
+
+
+@pytest.mark.asyncio
+async def test_filter_by_assigned_user(client: AsyncClient, sample_hardware_json: bytes):
+    await client.post("/ingest", files={"file": ("hw.json", sample_hardware_json)})
+
+    resp = await client.get("/devices", params={"assigned_user": "John"})
+    data = resp.json()
+    assert data["total"] >= 1
+    for item in data["items"]:
+        assert "john" in (item.get("assigned_user_name") or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_filter_by_department(client: AsyncClient, sample_hardware_json: bytes):
+    """Department filter should work even if no devices have department set."""
+    await client.post("/ingest", files={"file": ("hw.json", sample_hardware_json)})
+
+    resp = await client.get("/devices", params={"department": "Engineering"})
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_combined_filters(client: AsyncClient, sample_hardware_json: bytes):
+    """Multiple filters should be applied together (AND logic)."""
+    await client.post("/ingest", files={"file": ("hw.json", sample_hardware_json)})
+
+    resp = await client.get("/devices", params={"status": "active", "os": "macOS"})
+    data = resp.json()
+    for item in data["items"]:
+        assert item["status"] == "active"
+        assert "macOS" in item["os"]
