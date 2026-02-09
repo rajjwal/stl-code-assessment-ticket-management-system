@@ -283,6 +283,13 @@ Convert this natural language question into a structured JSON query.
 AVAILABLE ENTITIES AND FIELDS:
 {json.dumps(QUERYABLE_FIELDS, indent=2)}
 
+RELATIONSHIPS BETWEEN ENTITIES:
+- devices → users: A device has an assigned user (via assigned_user_id)
+- devices → apps: Devices depend on apps (many-to-many)
+- users → apps: Users are assigned to apps (many-to-many)
+- apps → users: Apps have assigned users (many-to-many)
+- apps → devices: Apps are installed on devices (many-to-many)
+
 FILTER OPERATORS:
 - For exact match: {{"field": "value"}}
 - For contains/partial match: {{"field__contains": "value"}}
@@ -296,15 +303,24 @@ Return a JSON object with this structure:
 {{
     "entity_type": "devices" | "users" | "apps",
     "filters": {{}},
+    "join": null or {{
+        "entity_type": "devices" | "users" | "apps",
+        "join_type": "inner",
+        "filters": {{}}
+    }},
     "sort_by": "field_name" or null,
     "aggregation": "count" | "list" | null,
     "limit": number or null
 }}
 
+Use "join" when the question involves filtering one entity type based on properties of a RELATED entity type. The primary "entity_type" is what gets returned. The "join.entity_type" is the related entity to filter on. Set "join" to null for single-entity queries.
+
 Examples:
-- "Which users don't have MFA?" → {{"entity_type": "users", "filters": {{"mfa_enabled": false}}, "sort_by": null, "aggregation": "list", "limit": null}}
-- "How many SaaS apps?" → {{"entity_type": "apps", "filters": {{"app_type": "SaaS"}}, "sort_by": null, "aggregation": "count", "limit": null}}
-- "Show active devices in London" → {{"entity_type": "devices", "filters": {{"status": "active", "location__contains": "London"}}, "sort_by": null, "aggregation": "list", "limit": null}}
+- "Which users don't have MFA?" → {{"entity_type": "users", "filters": {{"mfa_enabled": false}}, "join": null, "sort_by": null, "aggregation": "list", "limit": null}}
+- "How many SaaS apps?" → {{"entity_type": "apps", "filters": {{"app_type": "SaaS"}}, "join": null, "sort_by": null, "aggregation": "count", "limit": null}}
+- "Show active devices in London" → {{"entity_type": "devices", "filters": {{"status": "active", "location__contains": "London"}}, "join": null, "sort_by": null, "aggregation": "list", "limit": null}}
+- "Which devices belong to users without MFA?" → {{"entity_type": "devices", "filters": {{}}, "join": {{"entity_type": "users", "join_type": "inner", "filters": {{"mfa_enabled": false}}}}, "sort_by": null, "aggregation": "list", "limit": null}}
+- "Which apps are used by the Engineering team?" → {{"entity_type": "apps", "filters": {{}}, "join": {{"entity_type": "users", "join_type": "inner", "filters": {{"team": "Engineering"}}}}, "sort_by": null, "aggregation": "list", "limit": null}}
 
 Return ONLY the JSON object. No explanation."""
 

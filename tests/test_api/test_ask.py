@@ -82,3 +82,43 @@ async def test_ask_empty_question_rejected(client: AsyncClient):
     # AskRequest requires a non-empty question field
     resp = await client.post("/ask", json={})
     assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_ask_cross_entity_devices_for_users(
+    client: AsyncClient,
+    sample_hardware_json: bytes,
+    sample_okta_json: bytes,
+):
+    """Cross-entity query: devices belonging to users without MFA."""
+    await client.post("/ingest", files={"file": ("hw.json", sample_hardware_json)})
+    await client.post("/ingest", files={"file": ("okta.json", sample_okta_json)})
+
+    with patch("app.services.query_service.parse_natural_language_query",
+               new_callable=AsyncMock) as mock_parse, \
+         patch("app.services.query_service.generate_answer",
+               new_callable=AsyncMock) as mock_answer:
+        mock_parse.return_value = {
+            "entity_type": "devices",
+            "filters": {},
+            "join": {
+                "entity_type": "users",
+                "join_type": "inner",
+                "filters": {"mfa_enabled": False},
+            },
+            "sort_by": None,
+            "aggregation": "list",
+            "limit": None,
+        }
+        mock_answer.return_value = "Found devices for users without MFA."
+
+        resp = await client.post(
+            "/ask",
+            json={"question": "Which devices belong to users without MFA?"},
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "results" in data
+    assert isinstance(data["results"], list)
+    assert "query_interpretation" in data

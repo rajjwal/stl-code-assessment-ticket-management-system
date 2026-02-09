@@ -23,9 +23,11 @@ async def _seed_query_data(db: AsyncSession) -> None:
                 mfa_enabled=False, status="suspended", team="Engineering"))
 
     db.add(Device(id="D-1", hostname="laptop-1", status="active",
-                  os="macOS", location="London"))
+                  os="macOS", location="London", assigned_user_id="u_1"))
     db.add(Device(id="D-2", hostname="server-1", status="active",
-                  os="Ubuntu 22.04 LTS", location="New York"))
+                  os="Ubuntu 22.04 LTS", location="New York", assigned_user_id="u_2"))
+    db.add(Device(id="D-3", hostname="desktop-1", status="active",
+                  os="Windows 11", location="London", assigned_user_id="u_3"))
 
     db.add(App(id="A-1", name="Slack", app_type="SaaS", sso_enabled=True))
     db.add(App(id="A-2", name="Jenkins", app_type="on-premise", sso_enabled=False))
@@ -83,8 +85,9 @@ class TestHandleQuestion:
 
             result = await handle_question("Show active devices in London", db_session)
 
-        assert len(result["results"]) == 1
-        assert result["results"][0]["hostname"] == "laptop-1"
+        assert len(result["results"]) == 2
+        hostnames = {r["hostname"] for r in result["results"]}
+        assert hostnames == {"laptop-1", "desktop-1"}
 
     @pytest.mark.asyncio
     async def test_saas_apps(self, db_session: AsyncSession):
@@ -213,3 +216,124 @@ class TestHandleQuestion:
         assert len(result["results"]) == 1
         assert result["results"][0]["name"] == "Slack"
         assert result["results"][0]["sso_enabled"] is True
+
+    @pytest.mark.asyncio
+    async def test_devices_for_users_without_mfa(self, db_session: AsyncSession):
+        """Cross-entity: devices whose assigned users lack MFA."""
+        await _seed_query_data(db_session)
+
+        query_spec = {
+            "entity_type": "devices",
+            "filters": {},
+            "join": {
+                "entity_type": "users",
+                "join_type": "inner",
+                "filters": {"mfa_enabled": False},
+            },
+            "sort_by": None,
+            "aggregation": "list",
+            "limit": None,
+        }
+
+        with patch("app.services.query_service.parse_natural_language_query",
+                    new_callable=AsyncMock) as mock_parse, \
+             patch("app.services.query_service.generate_answer",
+                    new_callable=AsyncMock) as mock_answer:
+            mock_parse.return_value = query_spec
+            mock_answer.return_value = "2 devices belong to users without MFA"
+
+            result = await handle_question(
+                "Which devices belong to users without MFA?", db_session
+            )
+
+        assert len(result["results"]) == 2
+        hostnames = {r["hostname"] for r in result["results"]}
+        # D-2 → Jane (no MFA), D-3 → Bob (no MFA)
+        assert hostnames == {"server-1", "desktop-1"}
+
+    @pytest.mark.asyncio
+    async def test_cross_entity_with_both_side_filters(self, db_session: AsyncSession):
+        """Cross-entity with filters on both primary and joined entities."""
+        await _seed_query_data(db_session)
+
+        query_spec = {
+            "entity_type": "devices",
+            "filters": {"location__contains": "London"},
+            "join": {
+                "entity_type": "users",
+                "join_type": "inner",
+                "filters": {"mfa_enabled": False},
+            },
+            "sort_by": None,
+            "aggregation": "list",
+            "limit": None,
+        }
+
+        with patch("app.services.query_service.parse_natural_language_query",
+                    new_callable=AsyncMock) as mock_parse, \
+             patch("app.services.query_service.generate_answer",
+                    new_callable=AsyncMock) as mock_answer:
+            mock_parse.return_value = query_spec
+            mock_answer.return_value = "1 device in London for users without MFA"
+
+            result = await handle_question(
+                "Devices in London for users without MFA?", db_session
+            )
+
+        # Only D-3 (London, assigned to Bob who has no MFA)
+        assert len(result["results"]) == 1
+        assert result["results"][0]["hostname"] == "desktop-1"
+
+    @pytest.mark.asyncio
+    async def test_no_join_backward_compatible(self, db_session: AsyncSession):
+        """Queries without a join field work exactly as before."""
+        await _seed_query_data(db_session)
+
+        query_spec = {
+            "entity_type": "devices",
+            "filters": {"status": "active"},
+            "sort_by": None,
+            "aggregation": "list",
+            "limit": None,
+        }
+
+        with patch("app.services.query_service.parse_natural_language_query",
+                    new_callable=AsyncMock) as mock_parse, \
+             patch("app.services.query_service.generate_answer",
+                    new_callable=AsyncMock) as mock_answer:
+            mock_parse.return_value = query_spec
+            mock_answer.return_value = "3 active devices"
+
+            result = await handle_question("Active devices?", db_session)
+
+        assert len(result["results"]) == 3
+
+    @pytest.mark.asyncio
+    async def test_invalid_join_entity_graceful(self, db_session: AsyncSession):
+        """An unrecognized join entity type should be ignored, not crash."""
+        await _seed_query_data(db_session)
+
+        query_spec = {
+            "entity_type": "devices",
+            "filters": {},
+            "join": {
+                "entity_type": "tickets",
+                "join_type": "inner",
+                "filters": {},
+            },
+            "sort_by": None,
+            "aggregation": "list",
+            "limit": None,
+        }
+
+        with patch("app.services.query_service.parse_natural_language_query",
+                    new_callable=AsyncMock) as mock_parse, \
+             patch("app.services.query_service.generate_answer",
+                    new_callable=AsyncMock) as mock_answer:
+            mock_parse.return_value = query_spec
+            mock_answer.return_value = "All devices"
+
+            result = await handle_question("test", db_session)
+
+        # Should return all devices (join was silently ignored)
+        assert len(result["results"]) == 3

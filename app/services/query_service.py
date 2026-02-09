@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.app import App
 from app.models.device import Device
+from app.models.relationships import device_app_dependencies, user_app_assignments
 from app.models.user import User
 from app.services.ai_service import generate_answer, parse_natural_language_query
 
@@ -28,6 +29,26 @@ ENTITY_MODELS = {
     "devices": Device,
     "users": User,
     "apps": App,
+}
+
+# Known join paths between entity types.
+# Lambdas defer column resolution to call time (avoids circular import issues).
+JOIN_PATHS = {
+    ("devices", "users"): {
+        "condition": lambda: Device.assigned_user_id == User.id,
+    },
+    ("devices", "apps"): {
+        "secondary": device_app_dependencies,
+    },
+    ("users", "apps"): {
+        "secondary": user_app_assignments,
+    },
+    ("apps", "users"): {
+        "secondary": user_app_assignments,
+    },
+    ("apps", "devices"): {
+        "secondary": device_app_dependencies,
+    },
 }
 
 
@@ -69,6 +90,12 @@ async def handle_question(
     query = select(model)
     query = _apply_filters(query, model, filters)
 
+    # Cross-entity join: filter primary entity based on related entity properties
+    join_spec = query_spec.get("join")
+    if join_spec:
+        query = _apply_join(query, entity_type, join_spec)
+        query = query.distinct()
+
     if limit:
         query = query.limit(limit)
 
@@ -86,6 +113,43 @@ async def handle_question(
         "results": results,
         "query_interpretation": interpretation,
     }
+
+
+def _apply_join(query, primary_entity_type: str, join_spec: dict):
+    """Apply a cross-entity join to the query.
+
+    Looks up the join path from JOIN_PATHS, applies the join, then applies
+    the join-side filters using the existing _apply_filters logic.
+
+    If the join entity or path is unknown, logs a warning and returns
+    the query unchanged (graceful degradation).
+    """
+    join_entity_type = join_spec.get("entity_type")
+    join_model = ENTITY_MODELS.get(join_entity_type)
+    join_filters = join_spec.get("filters", {})
+
+    if not join_model:
+        logger.warning(f"Unknown join entity type: {join_entity_type}")
+        return query
+
+    path_key = (primary_entity_type, join_entity_type)
+    join_path = JOIN_PATHS.get(path_key)
+
+    if not join_path:
+        logger.warning(f"No join path defined for {path_key}")
+        return query
+
+    # Direct FK join vs M2M via junction table
+    if "condition" in join_path:
+        query = query.join(join_model, join_path["condition"]())
+    elif "secondary" in join_path:
+        secondary = join_path["secondary"]
+        query = query.join(secondary).join(join_model)
+
+    # Apply filters on the joined entity
+    query = _apply_filters(query, join_model, join_filters)
+
+    return query
 
 
 def _apply_filters(query, model, filters: dict):
